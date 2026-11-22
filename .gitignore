@@ -1,0 +1,38 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Output and downloaded media files
+*.mp4
+*.m4a
+*.mp3
+*.mkv
+*.webm
+*.part
+*.ytdl
+
+# Executables & local binaries
+yt-dlp.exe
+ffmpeg.exe
+ffprobe.exe
+
+# Project-specific ignores (preserves local personal files)
+*.pdf
+
+# Operating System files
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# IDE / Editor folders
+.vscode/
+.idea/
+*.swp
