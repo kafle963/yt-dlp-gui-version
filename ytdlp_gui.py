@@ -442,7 +442,9 @@ class DownloadWorker(QThread):
                 line = line.rstrip()
                 if line:
                     if "-t value must be non-negative" in line:
-                        self.output_line.emit("⚠️ ERROR: Start time is beyond the end of the video! Remember: 10:00 is 10 minutes; 10:00:00 is 10 hours.")
+                        self.output_line.emit("⚠️ ERROR: Start time is beyond the end of the video! (Note: 10:00 = 10 minutes; 10:00:00 = 10 hours).")
+                    elif "Output file is empty, nothing was encoded" in line or "moov atom not found" in line:
+                        self.output_line.emit("⚠️ LIVESTREAM NOTICE: This livestream has not been fully processed into a standard VOD by YouTube yet. Its live stream timestamps do not start at 0:00:00. Time-range clipping will work normally once YouTube completes backend processing of the archive.")
                     # Filter benign developer notice
                     if "Late SEI is not implemented" in line or "upload a sample of this file" in line:
                         continue
