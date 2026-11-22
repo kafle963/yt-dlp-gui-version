@@ -1,10 +1,10 @@
 """
-yt-dlp GUI Pro — Streamlined two-column desktop interface for downloading YouTube clips.
-Designed strictly around user specification:
-- Left Column: Step 1 (Link), Step 2 (Clips), Step 3 (Quality Preset), Step 4 (Save To)
-- Right Column: Queue (visual clip status) + Collapsible Log (with header Copy / Clear)
-- Header: Minimal brand + live status dots (yt-dlp, Deno, FFmpeg) + Gear menu
-- Bottom Bar: Unified progress label + Cancel / Download buttons + Padded status bar
+yt-dlp GUI Pro — Modern desktop interface for clipping and downloading online media.
+Designed for high performance, frame-accurate cuts, and clean visual ergonomics:
+- Left Column: Step 1 (Link + live metadata card), Step 2 (Clips + quick duration pills), Step 3 (Quality & Size presets), Step 4 (Save To)
+- Right Column: Interactive Queue (with per-row deletion) + Rich HTML Log Viewer (color-coded by severity)
+- Header: Minimal brand + live status indicators (yt-dlp, Deno, FFmpeg) + Tools menu
+- Bottom Bar: Dynamic progress bar + Cancel / Download controls + Status bar
 """
 import os
 import re
@@ -13,8 +13,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QSettings, QSize, Qt, QThread, Signal
-from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPalette
+from PySide6.QtCore import QPoint, QSettings, QSize, Qt, QThread, QTimer, Signal, Slot
+from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPalette, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -45,6 +45,7 @@ from PySide6.QtWidgets import (
 
 PYTHON_EXE = sys.executable
 
+
 def resolve_ytdlp_cmd() -> list[str]:
     """Finds a verified, working yt-dlp command. Prefers Python's yt_dlp module, then PATH."""
     candidates = [
@@ -72,7 +73,7 @@ def resolve_ytdlp_cmd() -> list[str]:
 
 STYLESHEET = """
 QMainWindow, QDialog, QWidget {
-    background-color: #12141c;
+    background-color: #0f111a;
     color: #e2e8f0;
     font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
     font-size: 13px;
@@ -80,16 +81,16 @@ QMainWindow, QDialog, QWidget {
 
 /* Card Containers */
 QFrame#card {
-    background-color: #1a1d29;
-    border: 1px solid #272c3d;
+    background-color: #161926;
+    border: 1px solid #23283a;
     border-radius: 8px;
 }
 
-QFrame#cardHeader {
-    background-color: transparent;
-    border-bottom: 1px solid #272c3d;
-    padding-bottom: 6px;
-    margin-bottom: 8px;
+QFrame#metaCard {
+    background-color: #1a2035;
+    border: 1px solid #2d3b5e;
+    border-radius: 6px;
+    padding: 6px 10px;
 }
 
 /* Typography */
@@ -133,9 +134,9 @@ QLabel#statusDotInactive {
 
 /* Form Inputs */
 QLineEdit {
-    background-color: #222636;
+    background-color: #1e2336;
     color: #f8fafc;
-    border: 1px solid #333a4f;
+    border: 1px solid #2d354f;
     border-radius: 6px;
     padding: 5px 10px;
     font-size: 13px;
@@ -145,28 +146,28 @@ QLineEdit {
 }
 QLineEdit:focus {
     border: 1px solid #3b82f6;
-    background-color: #262c3e;
+    background-color: #242a42;
 }
 QLineEdit:disabled {
-    background-color: #161822;
+    background-color: #141724;
     color: #475569;
-    border-color: #222634;
+    border-color: #1e2233;
 }
 
 QComboBox {
-    background-color: #222636;
+    background-color: #1e2336;
     color: #f8fafc;
-    border: 1px solid #333a4f;
+    border: 1px solid #2d354f;
     border-radius: 6px;
     padding: 4px 10px;
     min-height: 32px;
     font-size: 13px;
 }
-QComboBox:hover { border-color: #434c67; }
+QComboBox:hover { border-color: #3e4a6d; }
 QComboBox:focus { border-color: #3b82f6; }
 QComboBox::drop-down { border: none; width: 20px; }
 QComboBox QAbstractItemView {
-    background-color: #222636;
+    background-color: #1a1e30;
     border: 1px solid #3b82f6;
     selection-background-color: #3b82f6;
     color: #f8fafc;
@@ -176,9 +177,9 @@ QComboBox QAbstractItemView {
 
 /* Buttons */
 QPushButton {
-    background-color: #222636;
+    background-color: #1e2336;
     color: #cbd5e1;
-    border: 1px solid #333a4f;
+    border: 1px solid #2d354f;
     border-radius: 6px;
     padding: 5px 14px;
     font-weight: 500;
@@ -186,18 +187,18 @@ QPushButton {
     min-height: 32px;
 }
 QPushButton:hover {
-    background-color: #2b3145;
+    background-color: #283049;
     color: #ffffff;
-    border-color: #4f5d83;
+    border-color: #43527a;
 }
 QPushButton:pressed {
-    background-color: #1e2230;
+    background-color: #181d2e;
     border-color: #3b82f6;
 }
 QPushButton:disabled {
-    background-color: #171924;
+    background-color: #141724;
     color: #475569;
-    border-color: #222634;
+    border-color: #1e2233;
 }
 
 /* Ghost / Header Text Buttons */
@@ -211,9 +212,42 @@ QPushButton#ghostBtn {
     min-height: 22px;
 }
 QPushButton#ghostBtn:hover {
-    background-color: #222636;
+    background-color: #1e2336;
     color: #f1f5f9;
-    border-color: #333a4f;
+    border-color: #2d354f;
+}
+
+/* Quick Duration Pills */
+QPushButton#pillBtn {
+    background-color: #182033;
+    color: #93c5fd;
+    border: 1px solid #2d3d63;
+    border-radius: 11px;
+    padding: 2px 7px;
+    font-size: 11px;
+    font-weight: 600;
+    min-height: 22px;
+}
+QPushButton#pillBtn:hover {
+    background-color: #233152;
+    border-color: #3b82f6;
+    color: #ffffff;
+}
+
+/* Row Delete Button */
+QPushButton#delBtn {
+    background-color: transparent;
+    color: #ef4444;
+    border: none;
+    font-size: 13px;
+    font-weight: 700;
+    border-radius: 4px;
+    padding: 0;
+    min-height: 20px;
+}
+QPushButton#delBtn:hover {
+    background-color: #3b1818;
+    color: #fca5a5;
 }
 
 /* Action Primary Download Button */
@@ -237,9 +271,9 @@ QPushButton#downloadBtn:disabled {
 
 /* Cancel / Stop Button */
 QPushButton#cancelBtn {
-    background-color: #222636;
+    background-color: #1e2336;
     color: #f87171;
-    border: 1px solid #451a1a;
+    border: 1px solid #4a1f1f;
     border-radius: 6px;
     padding: 8px 18px;
     font-size: 12px;
@@ -252,58 +286,58 @@ QPushButton#cancelBtn:hover {
     border-color: #991b1b;
 }
 QPushButton#cancelBtn:disabled {
-    background-color: #181922;
+    background-color: #141724;
     color: #452b2b;
-    border-color: #231c1c;
+    border-color: #1f1b1b;
 }
 
 /* Table */
 QTableWidget {
-    background-color: #161822;
-    border: 1px solid #272c3d;
+    background-color: #131622;
+    border: 1px solid #23283a;
     border-radius: 6px;
     gridline-color: transparent;
     outline: none;
 }
 QTableWidget::item {
     padding: 4px 6px;
-    border-bottom: 1px solid #1f2331;
+    border-bottom: 1px solid #1c2030;
 }
 QTableWidget::item:selected {
-    background-color: #222a3d;
+    background-color: #1e2842;
     color: #ffffff;
 }
 
 /* Log Text */
 QPlainTextEdit {
-    background-color: #13141d;
+    background-color: #0c0e17;
     color: #94a3b8;
-    border: 1px solid #242938;
+    border: 1px solid #1e2336;
     border-radius: 6px;
     font-family: 'Cascadia Code', 'Consolas', monospace;
     font-size: 11px;
-    padding: 6px;
+    padding: 8px;
 }
 
-/* Progress */
+/* Progress Bar */
 QProgressBar {
-    background-color: #1e2230;
-    border: 1px solid #272c3d;
+    background-color: #181d2c;
+    border: 1px solid #23293d;
     border-radius: 4px;
-    height: 8px;
+    height: 10px;
     text-align: center;
     color: transparent;
 }
 QProgressBar::chunk {
-    background: #3b82f6;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #2563eb, stop:1 #38bdf8);
     border-radius: 3px;
 }
 
 /* Status Bar */
 QStatusBar {
-    background-color: #101118;
+    background-color: #0c0e17;
     color: #64748b;
-    border-top: 1px solid #1e2230;
+    border-top: 1px solid #1a1e2d;
     font-size: 11px;
     padding: 4px 10px;
 }
@@ -312,6 +346,7 @@ QStatusBar {
 
 class HealthCheckDialog(QDialog):
     """System health check for yt-dlp, FFmpeg, Deno, and EJS."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Diagnostics & Dependencies")
@@ -382,6 +417,56 @@ class HealthCheckDialog(QDialog):
             self.table.setItem(cfg_row, 1, QTableWidgetItem("● None"))
             self.table.item(cfg_row, 1).setForeground(QColor("#eab308"))
             self.table.setItem(cfg_row, 2, QTableWidgetItem("No config found"))
+
+
+class MetadataWorker(QThread):
+    """Fetches video title, duration, and channel metadata asynchronously without UI freeze."""
+    metadata_ready = Signal(dict)
+    metadata_error = Signal(str)
+
+    def __init__(self, url: str):
+        super().__init__()
+        self._url = url
+
+    def run(self):
+        try:
+            cmd = resolve_ytdlp_cmd() + [
+                "--print", "%(title)s\t%(duration)s\t%(duration_string)s\t%(uploader,channel)s",
+                "--no-playlist", "--no-warnings",
+                self._url,
+            ]
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
+            out = proc.stdout.strip()
+            if out:
+                parts = out.split("\t")
+                title = parts[0]
+                dur_raw = parts[1] if len(parts) > 1 else "0"
+                dur_str = parts[2] if len(parts) > 2 else ""
+                channel = parts[3] if len(parts) > 3 else ""
+
+                try:
+                    dur_sec = float(dur_raw)
+                except ValueError:
+                    dur_sec = 0.0
+
+                data = {
+                    "title": title,
+                    "duration_sec": dur_sec,
+                    "duration_str": dur_str,
+                    "channel": channel,
+                }
+                self.metadata_ready.emit(data)
+            else:
+                self.metadata_error.emit(proc.stderr[:120])
+        except Exception as e:
+            self.metadata_error.emit(str(e))
 
 
 class CommandWorker(QThread):
@@ -494,16 +579,23 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("yt-dlp GUI Pro")
-        self.setMinimumSize(880, 580)
-        self.resize(920, 640)
+        self.setMinimumSize(920, 620)
+        self.resize(960, 660)
         self.setStyleSheet(STYLESHEET)
 
         self._worker: DownloadWorker | None = None
         self._cmd_worker: CommandWorker | None = None
+        self._meta_worker: MetadataWorker | None = None
         self._settings = QSettings("YtDlpGui", "Settings")
 
-        # In-memory clip queue: list of dicts: {"start": "1:10:00", "end": "1:11:00", "status": "Waiting"}
+        # In-memory clip queue: list of dicts: {"clip_num": 1, "start": "10:00", "end": "11:00", "range_str": "...", "status": "Waiting"}
         self._clips: list[dict] = []
+        self._video_duration_sec: float = 0.0
+
+        # Debounced URL timer to fetch metadata smoothly
+        self._url_timer = QTimer(self)
+        self._url_timer.setSingleShot(True)
+        self._url_timer.timeout.connect(self._fetch_metadata)
 
         self._init_ui()
         self._restore_settings()
@@ -592,6 +684,24 @@ class MainWindow(QMainWindow):
         row_url.addWidget(self.btn_paste)
         c1_layout.addLayout(row_url)
 
+        # Live Metadata Preview Box (appears automatically once link is resolved)
+        self.frame_meta = QFrame(card_link)
+        self.frame_meta.setObjectName("metaCard")
+        meta_layout = QVBoxLayout(self.frame_meta)
+        meta_layout.setContentsMargins(6, 6, 6, 6)
+        meta_layout.setSpacing(3)
+
+        self.lbl_video_title = QLabel("", self.frame_meta)
+        self.lbl_video_title.setStyleSheet("color: #f1f5f9; font-weight: 600; font-size: 12px;")
+        self.lbl_video_title.setWordWrap(True)
+        meta_layout.addWidget(self.lbl_video_title)
+
+        self.lbl_video_sub = QLabel("", self.frame_meta)
+        self.lbl_video_sub.setStyleSheet("color: #38bdf8; font-size: 11px;")
+        meta_layout.addWidget(self.lbl_video_sub)
+        self.frame_meta.setVisible(False)
+        c1_layout.addWidget(self.frame_meta)
+
         self.lbl_meta = QLabel("Paste link to automatically resolve info · leave blank for full video", card_link)
         self.lbl_meta.setObjectName("subText")
         self.lbl_meta.setWordWrap(True)
@@ -645,6 +755,22 @@ class MainWindow(QMainWindow):
         row_clip_in.addWidget(self.btn_add_clip)
         row_clip_in.addStretch()
         c2_layout.addLayout(row_clip_in)
+
+        # Quick Duration Pills (+30s, +1m, +2m, +5m)
+        row_pills = QHBoxLayout()
+        row_pills.setSpacing(6)
+        lbl_quick = QLabel("Quick end:", card_clips)
+        lbl_quick.setStyleSheet("color: #64748b; font-size: 11px;")
+        row_pills.addWidget(lbl_quick)
+
+        for text, sec in [("+30s", 30), ("+1m", 60), ("+2m", 120), ("+5m", 300)]:
+            btn = QPushButton(text, card_clips)
+            btn.setObjectName("pillBtn")
+            btn.setFixedWidth(50)
+            btn.clicked.connect(lambda _, s=sec: self._apply_quick_duration(s))
+            row_pills.addWidget(btn)
+        row_pills.addStretch()
+        c2_layout.addLayout(row_pills)
 
         lbl_hint = QLabel("Hint: 10:00 is 10 min · 1:10:00 is 1 hr 10 min", card_clips)
         lbl_hint.setObjectName("subText")
@@ -772,11 +898,12 @@ class MainWindow(QMainWindow):
         q_hdr.addWidget(btn_clear_q)
         q_layout.addLayout(q_hdr)
 
-        self.tbl_queue = QTableWidget(0, 3, card_q)
-        self.tbl_queue.setHorizontalHeaderLabels(["Clip", "Range", "Status"])
+        self.tbl_queue = QTableWidget(0, 4, card_q)
+        self.tbl_queue.setHorizontalHeaderLabels(["#", "Range", "Status", ""])
         self.tbl_queue.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.tbl_queue.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.tbl_queue.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.tbl_queue.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self.tbl_queue.verticalHeader().setVisible(False)
         self.tbl_queue.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         q_layout.addWidget(self.tbl_queue)
@@ -809,14 +936,14 @@ class MainWindow(QMainWindow):
 
         self.log_view = QPlainTextEdit(card_log)
         self.log_view.setReadOnly(True)
-        self.log_view.setMaximumBlockCount(600)
+        self.log_view.setMaximumBlockCount(800)
         self.log_view.setPlaceholderText("Download logs and format inspection details will appear here...")
         log_layout.addWidget(self.log_view)
 
         right_layout.addWidget(card_log, 1)
 
         splitter.addWidget(right_col)
-        splitter.setSizes([430, 450])
+        splitter.setSizes([440, 460])
         layout.addWidget(splitter, 1)
 
         # ── 3. BOTTOM CONTROL BAR ─────────────────────────────────
@@ -865,7 +992,6 @@ class MainWindow(QMainWindow):
 
     def _check_components_status(self):
         """Quick check to set green or red status dots in the header."""
-        # yt-dlp
         cmd = resolve_ytdlp_cmd() + ["--version"]
         try:
             subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -940,7 +1066,7 @@ class MainWindow(QMainWindow):
         self._cmd_worker.start()
 
     # ─────────────────────────────────────────────────────────────
-    # Form Logic
+    # Form Logic & Metadata
     # ─────────────────────────────────────────────────────────────
 
     @staticmethod
@@ -961,16 +1087,69 @@ class MainWindow(QMainWindow):
             return None
         return None
 
+    @staticmethod
+    def _format_seconds(total_seconds: float) -> str:
+        s = max(0, int(total_seconds))
+        h = s // 3600
+        m = (s % 3600) // 60
+        sec = s % 60
+        if h > 0:
+            return f"{h}:{m:02d}:{sec:02d}"
+        return f"{m}:{sec:02d}"
+
     def _paste_url(self):
         clip = QApplication.clipboard().text().strip()
         if clip:
             self.txt_url.setText(clip)
 
     def _on_url_changed(self, text: str):
-        if "youtube.com" in text or "youtu.be" in text:
-            self.lbl_meta.setText("Link detected · ready to add clips or download")
-        elif not text:
+        cleaned = text.strip()
+        if "youtube.com" in cleaned or "youtu.be" in cleaned or "twitch.tv" in cleaned or "tiktok.com" in cleaned:
+            self.lbl_meta.setText("Link detected · resolving info...")
+            self._url_timer.start(750)
+        elif not cleaned:
+            self.frame_meta.setVisible(False)
+            self._video_duration_sec = 0.0
             self.lbl_meta.setText("Paste link to automatically resolve info · leave blank for full video")
+
+    def _fetch_metadata(self):
+        url = self.txt_url.text().strip()
+        if not url:
+            return
+        if self._meta_worker and self._meta_worker.isRunning():
+            self._meta_worker.terminate()
+        self._meta_worker = MetadataWorker(url)
+        self._meta_worker.metadata_ready.connect(self._on_metadata_loaded)
+        self._meta_worker.metadata_error.connect(lambda err: self.lbl_meta.setText("Link detected · ready"))
+        self._meta_worker.start()
+
+    def _on_metadata_loaded(self, data: dict):
+        title = data.get("title", "")
+        dur_str = data.get("duration_str", "")
+        channel = data.get("channel", "")
+        self._video_duration_sec = data.get("duration_sec", 0.0)
+
+        self.lbl_video_title.setText(f"🎬 {title}")
+        sub = []
+        if dur_str:
+            sub.append(f"⏱ {dur_str}")
+        if channel:
+            sub.append(f"👤 {channel}")
+        self.lbl_video_sub.setText(" · ".join(sub))
+        self.frame_meta.setVisible(True)
+        self.lbl_meta.setText("Metadata resolved · ready to add clips or download")
+
+    def _apply_quick_duration(self, added_sec: int):
+        """Automatically calculates and sets End time based on Start time."""
+        start_txt = self.txt_start.text().strip()
+        st_sec = self._parse_seconds(start_txt) if start_txt else 0.0
+        if st_sec is None:
+            st_sec = 0.0
+            self.txt_start.setText("0:00")
+        end_sec = st_sec + added_sec
+        if self._video_duration_sec > 0 and end_sec > self._video_duration_sec:
+            end_sec = self._video_duration_sec
+        self.txt_end.setText(self._format_seconds(end_sec))
 
     def _on_preset_changed(self, idx: int):
         if idx == 0:  # Smart Compact
@@ -1002,22 +1181,60 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Invalid Time Range", "End time must be greater than start time.\n(Example: Start 10:00, End 11:00)")
             return
 
+        # Check against video total duration if known
+        if self._video_duration_sec > 0 and st_sec is not None and st_sec > self._video_duration_sec:
+            QMessageBox.warning(
+                self,
+                "Start Time Beyond Video End",
+                f"The start time ({start}) is after the video ends ({self._format_seconds(self._video_duration_sec)})!\n"
+                "Remember: 10:00 is 10 minutes; 10:00:00 is 10 hours."
+            )
+            return
+
         range_str = f"{start or '0:00'}–{end or 'end'}"
         clip_num = len(self._clips) + 1
         item = {"clip_num": clip_num, "start": start or "0:00", "end": end or "inf", "range_str": range_str, "status": "Waiting"}
         self._clips.append(item)
-
-        row = self.tbl_queue.rowCount()
-        self.tbl_queue.insertRow(row)
-        self.tbl_queue.setItem(row, 0, QTableWidgetItem(f"Clip {clip_num}"))
-        self.tbl_queue.setItem(row, 1, QTableWidgetItem(range_str))
-        self.tbl_queue.setItem(row, 2, QTableWidgetItem("○ Waiting"))
-        self.tbl_queue.item(row, 2).setForeground(QColor("#94a3b8"))
+        self._refresh_queue_table()
 
         self.txt_start.clear()
         self.txt_end.clear()
         self.txt_start.setFocus()
         self.lbl_clip_count.setText(f"{len(self._clips)} clip{'s' if len(self._clips) > 1 else ''} queued")
+
+    def _delete_clip(self, clip_num: int):
+        self._clips = [c for c in self._clips if c["clip_num"] != clip_num]
+        for i, c in enumerate(self._clips, 1):
+            c["clip_num"] = i
+        self._refresh_queue_table()
+        cnt = len(self._clips)
+        self.lbl_clip_count.setText(f"{cnt} clip{'s' if cnt > 1 else ''} queued" if cnt else "0 added (full video)")
+
+    def _refresh_queue_table(self):
+        self.tbl_queue.setRowCount(len(self._clips))
+        for row, item in enumerate(self._clips):
+            self.tbl_queue.setItem(row, 0, QTableWidgetItem(f"Clip {item['clip_num']}"))
+            self.tbl_queue.setItem(row, 1, QTableWidgetItem(item["range_str"]))
+
+            st = item.get("status", "Waiting")
+            if st == "Done":
+                item_st = QTableWidgetItem("✔ Done")
+                item_st.setForeground(QColor("#22c55e"))
+            elif st == "Downloading":
+                item_st = QTableWidgetItem("⟳ Downloading")
+                item_st.setForeground(QColor("#38bdf8"))
+            else:
+                item_st = QTableWidgetItem("○ Waiting")
+                item_st.setForeground(QColor("#94a3b8"))
+            self.tbl_queue.setItem(row, 2, item_st)
+
+            # Delete button per row
+            btn_del = QPushButton("✕", self.tbl_queue)
+            btn_del.setObjectName("delBtn")
+            btn_del.setFixedSize(24, 22)
+            btn_del.setToolTip("Remove this clip")
+            btn_del.clicked.connect(lambda _, n=item["clip_num"]: self._delete_clip(n))
+            self.tbl_queue.setCellWidget(row, 3, btn_del)
 
     def _clear_queue(self):
         self._clips.clear()
@@ -1059,7 +1276,6 @@ class MainWindow(QMainWindow):
         max_h = res_limits.get(res_idx, "1080")
         crf_val = {0: "22", 1: "18", 2: "26"}.get(crf_idx, "22")
 
-        # Template handling: if multiple clips, add section start to prevent overwrites
         if len(self._clips) > 1:
             out_template = str(Path(output_dir) / "%(title)s [%(section_start)s].%(ext)s")
         else:
@@ -1092,7 +1308,6 @@ class MainWindow(QMainWindow):
             else:
                 cmd += ["-f", "bv*+ba/b"]
             cmd += ["--merge-output-format", "mp4"]
-            # Pure stream copy (no re-encode)
 
         elif preset_idx == 3:  # Audio Only
             cmd += ["-x", "--audio-format", "mp3", "--audio-quality", "0"]
@@ -1104,7 +1319,6 @@ class MainWindow(QMainWindow):
             if len(self._clips) >= 10:
                 cmd += ["--sleep-interval", "3", "--max-sleep-interval", "8"]
 
-        # High speed concurrent fragment downloading
         cmd += ["-N", "4"]
         cmd += ["-o", out_template]
         cmd += ["--file-access-retries", "10", "--fragment-retries", "10"]
@@ -1128,7 +1342,6 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage("Please paste a YouTube link first.")
             return
 
-        # If user typed times into start/end boxes without clicking "+ Add", add it automatically
         st = self.txt_start.text().strip()
         en = self.txt_end.text().strip()
         if (st or en) and not self._clips:
@@ -1146,10 +1359,9 @@ class MainWindow(QMainWindow):
         self.lbl_progress.setText(f"Starting {clip_str}...")
         self.status_bar.showMessage("Downloading...")
 
-        # Mark first queue item running if any
         if self._clips:
-            self.tbl_queue.setItem(0, 2, QTableWidgetItem("⟳ Downloading"))
-            self.tbl_queue.item(0, 2).setForeground(QColor("#3b82f6"))
+            self._clips[0]["status"] = "Downloading"
+            self._refresh_queue_table()
 
         self._worker = DownloadWorker(cmd)
         self._worker.output_line.connect(self._log)
@@ -1170,11 +1382,10 @@ class MainWindow(QMainWindow):
     def _on_progress_update(self, pct: int, speed: str):
         self.progress_bar.setValue(pct)
         total_clips = len(self._clips)
+        speed_txt = f" · {speed}" if speed else ""
         if total_clips > 1:
-            speed_txt = f" · {speed}" if speed else ""
             self.lbl_progress.setText(f"{pct}% ({total_clips} clips{speed_txt})")
         else:
-            speed_txt = f" · {speed}" if speed else ""
             self.lbl_progress.setText(f"{pct}%{speed_txt}")
 
     def _on_download_finished(self, success: bool, msg: str):
@@ -1185,10 +1396,9 @@ class MainWindow(QMainWindow):
             self.progress_bar.setValue(100)
             self.lbl_progress.setText("✔ Complete")
             self.status_bar.showMessage("Download complete!")
-            # Mark all queue items done
-            for row in range(self.tbl_queue.rowCount()):
-                self.tbl_queue.setItem(row, 2, QTableWidgetItem("✔ Done"))
-                self.tbl_queue.item(row, 2).setForeground(QColor("#22c55e"))
+            for c in self._clips:
+                c["status"] = "Done"
+            self._refresh_queue_table()
         else:
             self.lbl_progress.setText(f"⏹ {msg}")
             self.status_bar.showMessage(f"Download ended: {msg}")
@@ -1196,13 +1406,33 @@ class MainWindow(QMainWindow):
         self._worker = None
 
     def _log(self, text: str):
-        self.log_view.appendPlainText(text)
+        """Rich HTML colored logging inspired by QtLogging standards."""
+        color = "#94a3b8"  # Slate (default)
+        if "[download]" in text:
+            color = "#38bdf8"  # Cyan/sky blue
+        elif "ERROR" in text or "⚠️" in text or "error" in text.lower() or "403" in text:
+            color = "#f87171"  # Coral red
+        elif "✔" in text or "Complete" in text or "Ready" in text or "100%" in text or "✅" in text:
+            color = "#22c55e"  # Emerald green
+        elif "WARNING" in text or "NOTICE" in text or "Sleeping" in text:
+            color = "#fbbf24"  # Amber
+        elif text.startswith("──") or text.startswith("=="):
+            color = "#60a5fa"  # Accent blue
+
+        escaped = (
+            text.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+        )
+        html = f'<div style="color:{color}; font-family:\'Cascadia Code\', Consolas, monospace; font-size:11px; margin:1px 0; line-height:1.35;">{escaped}</div>'
+        self.log_view.appendHtml(html)
         self.log_view.verticalScrollBar().setValue(
             self.log_view.verticalScrollBar().maximum()
         )
 
     # ─────────────────────────────────────────────────────────────
-    # Persistence
+    # Persistence & Lifecycle
     # ─────────────────────────────────────────────────────────────
 
     def _restore_settings(self):
@@ -1222,35 +1452,41 @@ class MainWindow(QMainWindow):
         if saved_crf is not None:
             self.combo_crf.setCurrentIndex(int(saved_crf))
 
+    def cleanup_on_quit(self):
+        """Ensures worker threads and subprocesses terminate cleanly."""
+        if self._worker and self._worker.isRunning():
+            self._worker.cancel()
+            self._worker.wait(1500)
+        if self._meta_worker and self._meta_worker.isRunning():
+            self._meta_worker.terminate()
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/F", "/IM", "ffmpeg.exe"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+
     def closeEvent(self, event):
         self._settings.setValue("geometry", self.saveGeometry())
         self._settings.setValue("output_dir", self.txt_output.text())
         self._settings.setValue("preset_index", self.combo_preset.currentIndex())
         self._settings.setValue("res_index", self.combo_res.currentIndex())
         self._settings.setValue("crf_index", self.combo_crf.currentIndex())
-        if self._worker and self._worker.isRunning():
-            self._worker.cancel()
-            self._worker.wait(1500)
-        if sys.platform == "win32":
-            subprocess.run(["taskkill", "/F", "/IM", "ffmpeg.exe"],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                           creationflags=subprocess.CREATE_NO_WINDOW)
+        self.cleanup_on_quit()
         event.accept()
 
 
 def _apply_dark_palette(app: QApplication):
     p = QPalette()
-    p.setColor(QPalette.ColorRole.Window,          QColor("#12141c"))
+    p.setColor(QPalette.ColorRole.Window,          QColor("#0f111a"))
     p.setColor(QPalette.ColorRole.WindowText,      QColor("#f1f5f9"))
-    p.setColor(QPalette.ColorRole.Base,            QColor("#222636"))
-    p.setColor(QPalette.ColorRole.AlternateBase,   QColor("#1a1d29"))
-    p.setColor(QPalette.ColorRole.ToolTipBase,     QColor("#222636"))
+    p.setColor(QPalette.ColorRole.Base,            QColor("#1e2336"))
+    p.setColor(QPalette.ColorRole.AlternateBase,   QColor("#161926"))
+    p.setColor(QPalette.ColorRole.ToolTipBase,     QColor("#1e2336"))
     p.setColor(QPalette.ColorRole.ToolTipText,     QColor("#f1f5f9"))
     p.setColor(QPalette.ColorRole.Text,            QColor("#f8fafc"))
     p.setColor(QPalette.ColorRole.PlaceholderText, QColor("#64748b"))
     p.setColor(QPalette.ColorRole.BrightText,      QColor("#ffffff"))
     p.setColor(QPalette.ColorRole.ButtonText,      QColor("#f1f5f9"))
-    p.setColor(QPalette.ColorRole.Button,          QColor("#222636"))
+    p.setColor(QPalette.ColorRole.Button,          QColor("#1e2336"))
     p.setColor(QPalette.ColorRole.Highlight,       QColor("#2563eb"))
     p.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
     p.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text,       QColor("#475569"))
@@ -1263,7 +1499,7 @@ def main():
     if sys.platform == "win32":
         try:
             import ctypes
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("ytdlp.gui.pro.2.0")
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("ytdlp.gui.pro.2.5")
         except Exception:
             pass
 
@@ -1274,6 +1510,7 @@ def main():
     _apply_dark_palette(app)
 
     win = MainWindow()
+    app.aboutToQuit.connect(win.cleanup_on_quit)
     win.show()
     sys.exit(app.exec())
 
