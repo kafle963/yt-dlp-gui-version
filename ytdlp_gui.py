@@ -47,6 +47,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSplitter,
     QStatusBar,
@@ -865,8 +866,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("yt-dlp GUI Pro")
-        self.setMinimumSize(920, 620)
-        self.resize(960, 660)
+        self.setMinimumSize(940, 580)
+        self.resize(1020, 740)
         self.setStyleSheet(STYLESHEET)
 
         self._worker: DownloadWorker | None = None
@@ -932,7 +933,7 @@ class MainWindow(QMainWindow):
         splitter.setHandleWidth(8)
 
         # ── LEFT COLUMN: FORM CONTROLS ────────────────────────────
-        left_col = QWidget(splitter)
+        left_col = QWidget()
         left_layout = QVBoxLayout(left_col)
         left_layout.setContentsMargins(0, 0, 4, 0)
         left_layout.setSpacing(10)
@@ -998,6 +999,7 @@ class MainWindow(QMainWindow):
         # CARD 2: CLIPS & TRIMMING
         card_clips = QFrame(left_col)
         card_clips.setObjectName("card")
+        card_clips.setMinimumHeight(215)
         c2_layout = QVBoxLayout(card_clips)
         c2_layout.setContentsMargins(12, 10, 12, 12)
         c2_layout.setSpacing(8)
@@ -1024,8 +1026,8 @@ class MainWindow(QMainWindow):
 
         row_slider_hdr.addStretch()
 
-        self.lbl_slider_info = QLabel("Drag handles to set clip range", card_clips)
-        self.lbl_slider_info.setStyleSheet("color: #38bdf8; font-size: 11px; font-weight: 700; background-color: #1e293b; padding: 2px 8px; border-radius: 4px;")
+        self.lbl_slider_info = QLabel("▶ 0:00 – 1:00 (1m 00s)", card_clips)
+        self.lbl_slider_info.setStyleSheet("color: #38bdf8; font-size: 11px; font-weight: 700; background-color: #1a2234; padding: 2px 8px; border-radius: 4px; border: 1px solid #233152;")
         row_slider_hdr.addWidget(self.lbl_slider_info)
 
         row_slider_hdr.addStretch()
@@ -1049,8 +1051,8 @@ class MainWindow(QMainWindow):
 
         self.txt_start = QLineEdit(card_clips)
         self.txt_start.setPlaceholderText("0:00")
-        self.txt_start.setFixedWidth(75)
-        self.txt_start.setMinimumHeight(30)
+        self.txt_start.setFixedWidth(70)
+        self.txt_start.setFixedHeight(28)
         self.txt_start.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.txt_start.textEdited.connect(self._on_time_text_edited)
         row_clip_in.addWidget(self.txt_start)
@@ -1061,22 +1063,22 @@ class MainWindow(QMainWindow):
 
         self.txt_end = QLineEdit(card_clips)
         self.txt_end.setPlaceholderText("1:00")
-        self.txt_end.setFixedWidth(75)
-        self.txt_end.setMinimumHeight(30)
+        self.txt_end.setFixedWidth(70)
+        self.txt_end.setFixedHeight(28)
         self.txt_end.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.txt_end.textEdited.connect(self._on_time_text_edited)
         row_clip_in.addWidget(self.txt_end)
 
         self.btn_add_clip = QPushButton("+ Add", card_clips)
-        self.btn_add_clip.setFixedWidth(60)
-        self.btn_add_clip.setMinimumHeight(30)
+        self.btn_add_clip.setFixedWidth(58)
+        self.btn_add_clip.setFixedHeight(28)
         self.btn_add_clip.clicked.connect(self._add_clip_to_queue)
         row_clip_in.addWidget(self.btn_add_clip)
 
         self.btn_reset_clip = QPushButton("Reset", card_clips)
         self.btn_reset_clip.setObjectName("secondaryBtn")
-        self.btn_reset_clip.setFixedWidth(55)
-        self.btn_reset_clip.setMinimumHeight(30)
+        self.btn_reset_clip.setFixedWidth(52)
+        self.btn_reset_clip.setFixedHeight(28)
         self.btn_reset_clip.setToolTip("Clear clip selection to download full video")
         self.btn_reset_clip.clicked.connect(self._reset_clip_inputs)
         row_clip_in.addWidget(self.btn_reset_clip)
@@ -1094,7 +1096,8 @@ class MainWindow(QMainWindow):
         for text, sec in [("+30s", 30), ("+1m", 60), ("+2m", 120), ("+5m", 300)]:
             btn = QPushButton(text, card_clips)
             btn.setObjectName("pillBtn")
-            btn.setFixedWidth(50)
+            btn.setFixedWidth(48)
+            btn.setFixedHeight(22)
             btn.clicked.connect(lambda _, s=sec: self._apply_quick_duration(s))
             row_pills.addWidget(btn)
         row_pills.addStretch()
@@ -1199,7 +1202,34 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(card_save)
         left_layout.addStretch()
 
-        splitter.addWidget(left_col)
+        scroll_left = QScrollArea(splitter)
+        scroll_left.setWidgetResizable(True)
+        scroll_left.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_left.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_left.setStyleSheet("""
+            QScrollArea { background-color: transparent; border: none; }
+            QScrollBar:vertical {
+                border: none;
+                background: #0f111a;
+                width: 6px;
+                margin: 0;
+            }
+            QScrollBar::handle:vertical {
+                background: #23283a;
+                min-height: 20px;
+                border-radius: 3px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #3b82f6;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0;
+                border: none;
+                background: none;
+            }
+        """)
+        scroll_left.setWidget(left_col)
+        splitter.addWidget(scroll_left)
 
         # ── RIGHT COLUMN: QUEUE & DETAILS LOG ─────────────────────
         right_col = QWidget(splitter)
@@ -1271,7 +1301,7 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(card_log, 1)
 
         splitter.addWidget(right_col)
-        splitter.setSizes([440, 460])
+        splitter.setSizes([470, 490])
         layout.addWidget(splitter, 1)
 
         # ── 3. BOTTOM CONTROL BAR ─────────────────────────────────
