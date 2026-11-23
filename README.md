@@ -48,8 +48,8 @@ YouTube requires JavaScript challenge execution to prevent bandwidth throttling.
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/your-username/your-repo-name.git
-cd your-repo-name
+git clone https://github.com/kafle963/yt-dlp-gui-version.git
+cd yt-dlp-gui-version
 ```
 
 ### 2. Install Python Dependencies
@@ -105,6 +105,9 @@ When re-encoding clips with **Smart Compact**, you can select your desired visua
 
 ## Key Features
 
+- **Visual Dual-Handle Range Slider:** Intuitive slider with independent Start (left) and End (right) handles. Drag to scrub or translate the entire selection window with real-time timestamp and duration badges.
+- **Two-Way Synchronization:** Type timestamps manually, click quick-duration pills (`+30s`, `+1m`, `+2m`, `+5m`), or slide the knobs—everything stays synchronized in real time.
+- **Dynamic Timeline Scaling:** Automatically scales the slider's timeline to the video's exact duration as soon as a link is resolved.
 - **Multi-Clip Single Pass:** Download several clips from a single stream in one run without re-fetching page data or re-solving challenges.
 - **Multi-Threaded Fragment Downloading (`-N 4`):** Uses 4 concurrent connections per download to saturate your bandwidth.
 - **Editing-Safe Codec:** Exact synchronization in DaVinci Resolve, Adobe Premiere, and CapCut with `--force-keyframes-at-cuts`.
@@ -114,4 +117,4 @@ When re-encoding clips with **Smart Compact**, you can select your desired visua
 ---
 
 ## License
-MIT License.
+MIT License. 

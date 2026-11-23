@@ -13,8 +13,21 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QSettings, QSize, Qt, QThread, QTimer, Signal, Slot
-from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPalette, QTextCursor
+from PySide6.QtCore import QPoint, QPointF, QRectF, QSettings, QSize, Qt, QThread, QTimer, Signal, Slot
+from PySide6.QtGui import (
+    QAction,
+    QBrush,
+    QColor,
+    QFont,
+    QIcon,
+    QLinearGradient,
+    QMouseEvent,
+    QPaintEvent,
+    QPainter,
+    QPalette,
+    QPen,
+    QTextCursor,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -250,6 +263,23 @@ QPushButton#delBtn:hover {
     color: #fca5a5;
 }
 
+/* Secondary Button */
+QPushButton#secondaryBtn {
+    background-color: #1a1e2e;
+    color: #94a3b8;
+    border: 1px solid #283049;
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 500;
+    min-height: 28px;
+}
+QPushButton#secondaryBtn:hover {
+    background-color: #232a3f;
+    color: #e2e8f0;
+    border-color: #3e4d73;
+}
+
 /* Action Primary Download Button */
 QPushButton#downloadBtn {
     background-color: #2563eb;
@@ -342,6 +372,262 @@ QStatusBar {
     padding: 4px 10px;
 }
 """
+
+
+class RangeSlider(QWidget):
+    """
+    Sleek dual-handle range slider for video clipping.
+    - Left handle adjusts Start time.
+    - Right handle adjusts End time.
+    - Middle active bar can be dragged to slide the selected window.
+    - Clicking the track jumps the nearest handle.
+    - Emits rangeChanged(float, float) in seconds.
+    """
+
+    rangeChanged = Signal(float, float)
+    lowChanged = Signal(float)
+    highChanged = Signal(float)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(34)
+        self.setMouseTracking(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        self._min_val = 0.0
+        self._max_val = 600.0  # 10 min default until video duration loads
+        self._low_val = 0.0
+        self._high_val = 60.0  # default 1 min selection
+        self._min_gap = 1.0    # 1 second minimum clip length
+
+        self._handle_r = 8.5
+        self._hover_target = None   # 'low', 'high', 'bar', None
+        self._active_target = None  # 'low', 'high', 'bar', None
+        self._drag_start_x = 0.0
+        self._drag_start_low = 0.0
+        self._drag_start_high = 0.0
+
+    def setRange(self, min_val: float, max_val: float):
+        self._min_val = max(0.0, float(min_val))
+        self._max_val = max(self._min_val + self._min_gap, float(max_val))
+        self._low_val = max(self._min_val, min(self._low_val, self._max_val - self._min_gap))
+        self._high_val = max(self._low_val + self._min_gap, min(self._high_val, self._max_val))
+        self.update()
+
+    def setValues(self, low: float, high: float):
+        low = max(self._min_val, min(float(low), self._max_val - self._min_gap))
+        high = max(low + self._min_gap, min(float(high), self._max_val))
+        if abs(low - self._low_val) > 0.01 or abs(high - self._high_val) > 0.01:
+            self._low_val = low
+            self._high_val = high
+            self.update()
+
+    def setLow(self, low: float):
+        self.setValues(low, self._high_val)
+
+    def setHigh(self, high: float):
+        self.setValues(self._low_val, high)
+
+    def low(self) -> float:
+        return self._low_val
+
+    def high(self) -> float:
+        return self._high_val
+
+    def _val_to_x(self, val: float) -> float:
+        pad = self._handle_r + 6.0
+        track_w = max(1.0, float(self.width()) - 2.0 * pad)
+        span = max(0.001, self._max_val - self._min_val)
+        ratio = max(0.0, min(1.0, (val - self._min_val) / span))
+        return pad + ratio * track_w
+
+    def _x_to_val(self, x: float) -> float:
+        pad = self._handle_r + 6.0
+        track_w = max(1.0, float(self.width()) - 2.0 * pad)
+        ratio = max(0.0, min(1.0, (x - pad) / track_w))
+        return self._min_val + ratio * (self._max_val - self._min_val)
+
+    def mousePressEvent(self, event: QMouseEvent):
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        pos = event.position()
+        x = pos.x()
+        y = pos.y()
+        cy = self.height() / 2.0
+
+        x_low = self._val_to_x(self._low_val)
+        x_high = self._val_to_x(self._high_val)
+
+        dist_low = abs(x - x_low)
+        dist_high = abs(x - x_high)
+        hit_tol = self._handle_r + 6.0
+
+        if dist_low <= hit_tol and dist_low <= dist_high:
+            self._active_target = "low"
+        elif dist_high <= hit_tol:
+            self._active_target = "high"
+        elif x_low < x < x_high and abs(y - cy) <= 12.0:
+            self._active_target = "bar"
+            self._drag_start_x = x
+            self._drag_start_low = self._low_val
+            self._drag_start_high = self._high_val
+        else:
+            # Clicked outside handles: jump the closer handle
+            if x < x_low:
+                self._active_target = "low"
+                new_low = max(self._min_val, min(self._x_to_val(x), self._high_val - self._min_gap))
+                self._low_val = new_low
+                self.rangeChanged.emit(self._low_val, self._high_val)
+                self.lowChanged.emit(self._low_val)
+            elif x > x_high:
+                self._active_target = "high"
+                new_high = min(self._max_val, max(self._x_to_val(x), self._low_val + self._min_gap))
+                self._high_val = new_high
+                self.rangeChanged.emit(self._low_val, self._high_val)
+                self.highChanged.emit(self._high_val)
+            else:
+                if dist_low <= dist_high:
+                    self._active_target = "low"
+                else:
+                    self._active_target = "high"
+
+        self.update()
+
+    def mouseMoveEvent(self, event: QMouseEvent):
+        pos = event.position()
+        x = pos.x()
+        y = pos.y()
+        cy = self.height() / 2.0
+
+        if self._active_target is None:
+            # Update hover state
+            x_low = self._val_to_x(self._low_val)
+            x_high = self._val_to_x(self._high_val)
+            dist_low = abs(x - x_low)
+            dist_high = abs(x - x_high)
+            hit_tol = self._handle_r + 6.0
+
+            old_hover = self._hover_target
+            if dist_low <= hit_tol and dist_low <= dist_high:
+                self._hover_target = "low"
+            elif dist_high <= hit_tol:
+                self._hover_target = "high"
+            elif x_low < x < x_high and abs(y - cy) <= 12.0:
+                self._hover_target = "bar"
+            else:
+                self._hover_target = None
+
+            if self._hover_target != old_hover:
+                self.update()
+            return
+
+        # Dragging active handle or bar
+        if self._active_target == "low":
+            new_val = self._x_to_val(x)
+            new_low = max(self._min_val, min(new_val, self._high_val - self._min_gap))
+            if abs(new_low - self._low_val) > 0.01:
+                self._low_val = new_low
+                self.rangeChanged.emit(self._low_val, self._high_val)
+                self.lowChanged.emit(self._low_val)
+                self.update()
+
+        elif self._active_target == "high":
+            new_val = self._x_to_val(x)
+            new_high = min(self._max_val, max(new_val, self._low_val + self._min_gap))
+            if abs(new_high - self._high_val) > 0.01:
+                self._high_val = new_high
+                self.rangeChanged.emit(self._low_val, self._high_val)
+                self.highChanged.emit(self._high_val)
+                self.update()
+
+        elif self._active_target == "bar":
+            delta_val = self._x_to_val(x) - self._x_to_val(self._drag_start_x)
+            dur = self._drag_start_high - self._drag_start_low
+            new_low = self._drag_start_low + delta_val
+            new_high = self._drag_start_high + delta_val
+
+            if new_low < self._min_val:
+                new_low = self._min_val
+                new_high = new_low + dur
+            elif new_high > self._max_val:
+                new_high = self._max_val
+                new_low = new_high - dur
+
+            if abs(new_low - self._low_val) > 0.01 or abs(new_high - self._high_val) > 0.01:
+                self._low_val = new_low
+                self._high_val = new_high
+                self.rangeChanged.emit(self._low_val, self._high_val)
+                self.lowChanged.emit(self._low_val)
+                self.highChanged.emit(self._high_val)
+                self.update()
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        self._active_target = None
+        self.update()
+
+    def leaveEvent(self, event):
+        self._hover_target = None
+        self.update()
+
+    def paintEvent(self, event: QPaintEvent):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        pad = self._handle_r + 6.0
+        w = float(self.width())
+        h = float(self.height())
+        cy = h / 2.0
+        track_h = 6.0
+        track_y = cy - track_h / 2.0
+        track_w = max(1.0, w - 2.0 * pad)
+
+        # 1. Groove track
+        painter.setPen(QPen(QColor("#283049"), 1.0))
+        painter.setBrush(QBrush(QColor("#161a29")))
+        painter.drawRoundedRect(QRectF(pad, track_y, track_w, track_h), 3.0, 3.0)
+
+        # 2. Selected Active Range Span
+        x_low = self._val_to_x(self._low_val)
+        x_high = self._val_to_x(self._high_val)
+        span_w = max(0.0, x_high - x_low)
+
+        grad = QLinearGradient(x_low, 0, x_high, 0)
+        grad.setColorAt(0.0, QColor("#38bdf8"))  # Sky blue
+        grad.setColorAt(1.0, QColor("#818cf8"))  # Indigo
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(grad))
+        painter.drawRoundedRect(QRectF(x_low, track_y, span_w, track_h), 3.0, 3.0)
+
+        # 3. Handles (Left: Start, Right: End)
+        for target, x_pos, fill_color in [
+            ("low", x_low, QColor("#38bdf8")),
+            ("high", x_high, QColor("#818cf8")),
+        ]:
+            is_hover = (self._hover_target == target)
+            is_active = (self._active_target == target)
+            r = self._handle_r
+
+            # Outer glow halo when hover or active
+            if is_active or is_hover:
+                halo_color = QColor(fill_color)
+                halo_color.setAlpha(65 if is_active else 35)
+                painter.setBrush(QBrush(halo_color))
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawEllipse(QPointF(x_pos, cy), r + 4.5, r + 4.5)
+
+            # Handle knob body
+            painter.setBrush(QBrush(fill_color))
+            border_pen = QPen(QColor("#ffffff" if (is_hover or is_active) else "#cbd5e1"), 2.0)
+            painter.setPen(border_pen)
+            painter.drawEllipse(QPointF(x_pos, cy), r, r)
+
+            # Center white dot
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor("#ffffff")))
+            painter.drawEllipse(QPointF(x_pos, cy), 2.2, 2.2)
+
+        painter.end()
 
 
 class HealthCheckDialog(QDialog):
@@ -709,7 +995,7 @@ class MainWindow(QMainWindow):
 
         left_layout.addWidget(card_link)
 
-        # CARD 2: CLIPS
+        # CARD 2: CLIPS & TRIMMING
         card_clips = QFrame(left_col)
         card_clips.setObjectName("card")
         c2_layout = QVBoxLayout(card_clips)
@@ -720,7 +1006,7 @@ class MainWindow(QMainWindow):
         lbl_s2 = QLabel("2", card_clips)
         lbl_s2.setObjectName("stepNumber")
         c2_hdr.addWidget(lbl_s2)
-        lbl_t2 = QLabel("Clips", card_clips)
+        lbl_t2 = QLabel("Clips & Trimming", card_clips)
         lbl_t2.setObjectName("cardTitle")
         c2_hdr.addWidget(lbl_t2)
         c2_hdr.addStretch()
@@ -730,29 +1016,71 @@ class MainWindow(QMainWindow):
         c2_hdr.addWidget(self.lbl_clip_count)
         c2_layout.addLayout(c2_hdr)
 
+        # Timeline duration header row above slider
+        row_slider_hdr = QHBoxLayout()
+        self.lbl_slider_min = QLabel("0:00", card_clips)
+        self.lbl_slider_min.setStyleSheet("color: #64748b; font-size: 11px; font-weight: 600;")
+        row_slider_hdr.addWidget(self.lbl_slider_min)
+
+        row_slider_hdr.addStretch()
+
+        self.lbl_slider_info = QLabel("Drag handles to set clip range", card_clips)
+        self.lbl_slider_info.setStyleSheet("color: #38bdf8; font-size: 11px; font-weight: 700; background-color: #1e293b; padding: 2px 8px; border-radius: 4px;")
+        row_slider_hdr.addWidget(self.lbl_slider_info)
+
+        row_slider_hdr.addStretch()
+
+        self.lbl_slider_max = QLabel("10:00", card_clips)
+        self.lbl_slider_max.setStyleSheet("color: #64748b; font-size: 11px; font-weight: 600;")
+        row_slider_hdr.addWidget(self.lbl_slider_max)
+        c2_layout.addLayout(row_slider_hdr)
+
+        # Dual Handle Range Slider (left handle = Start, right handle = End)
+        self.slider_range = RangeSlider(card_clips)
+        self.slider_range.rangeChanged.connect(self._on_slider_range_changed)
+        c2_layout.addWidget(self.slider_range)
+
+        # Inputs row with Start, End, Add, and Reset
         row_clip_in = QHBoxLayout()
         row_clip_in.setSpacing(6)
-        row_clip_in.addWidget(QLabel("Start", card_clips))
+        lbl_st = QLabel("Start", card_clips)
+        lbl_st.setStyleSheet("color: #94a3b8; font-size: 11px; font-weight: 600;")
+        row_clip_in.addWidget(lbl_st)
+
         self.txt_start = QLineEdit(card_clips)
-        self.txt_start.setPlaceholderText("10:00")
-        self.txt_start.setFixedWidth(80)
-        self.txt_start.setMinimumHeight(32)
+        self.txt_start.setPlaceholderText("0:00")
+        self.txt_start.setFixedWidth(75)
+        self.txt_start.setMinimumHeight(30)
         self.txt_start.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.txt_start.textEdited.connect(self._on_time_text_edited)
         row_clip_in.addWidget(self.txt_start)
 
-        row_clip_in.addWidget(QLabel("End", card_clips))
+        lbl_en = QLabel("End", card_clips)
+        lbl_en.setStyleSheet("color: #94a3b8; font-size: 11px; font-weight: 600;")
+        row_clip_in.addWidget(lbl_en)
+
         self.txt_end = QLineEdit(card_clips)
-        self.txt_end.setPlaceholderText("11:00")
-        self.txt_end.setFixedWidth(80)
-        self.txt_end.setMinimumHeight(32)
+        self.txt_end.setPlaceholderText("1:00")
+        self.txt_end.setFixedWidth(75)
+        self.txt_end.setMinimumHeight(30)
         self.txt_end.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.txt_end.textEdited.connect(self._on_time_text_edited)
         row_clip_in.addWidget(self.txt_end)
 
         self.btn_add_clip = QPushButton("+ Add", card_clips)
-        self.btn_add_clip.setFixedWidth(65)
-        self.btn_add_clip.setMinimumHeight(32)
+        self.btn_add_clip.setFixedWidth(60)
+        self.btn_add_clip.setMinimumHeight(30)
         self.btn_add_clip.clicked.connect(self._add_clip_to_queue)
         row_clip_in.addWidget(self.btn_add_clip)
+
+        self.btn_reset_clip = QPushButton("Reset", card_clips)
+        self.btn_reset_clip.setObjectName("secondaryBtn")
+        self.btn_reset_clip.setFixedWidth(55)
+        self.btn_reset_clip.setMinimumHeight(30)
+        self.btn_reset_clip.setToolTip("Clear clip selection to download full video")
+        self.btn_reset_clip.clicked.connect(self._reset_clip_inputs)
+        row_clip_in.addWidget(self.btn_reset_clip)
+
         row_clip_in.addStretch()
         c2_layout.addLayout(row_clip_in)
 
@@ -772,7 +1100,7 @@ class MainWindow(QMainWindow):
         row_pills.addStretch()
         c2_layout.addLayout(row_pills)
 
-        lbl_hint = QLabel("Hint: 10:00 is 10 min · 1:10:00 is 1 hr 10 min", card_clips)
+        lbl_hint = QLabel("💡 Slide left knob for Start, right knob for End, or drag bar between", card_clips)
         lbl_hint.setObjectName("subText")
         c2_layout.addWidget(lbl_hint)
 
@@ -1123,6 +1451,51 @@ class MainWindow(QMainWindow):
         self._meta_worker.metadata_error.connect(lambda err: self.lbl_meta.setText("Link detected · ready"))
         self._meta_worker.start()
 
+    def _on_slider_range_changed(self, low: float, high: float):
+        """Called when user drags or clicks the range slider handles."""
+        self.txt_start.setText(self._format_seconds(low))
+        self.txt_end.setText(self._format_seconds(high))
+        dur_sec = max(0.0, high - low)
+        self.lbl_slider_info.setText(
+            f"▶ {self._format_seconds(low)} – {self._format_seconds(high)} ({self._format_seconds(dur_sec)})"
+        )
+        if not self._clips:
+            self.lbl_clip_count.setText("Clip selected (press + Add)")
+
+    def _on_time_text_edited(self):
+        """Called when user manually types into Start or End text boxes."""
+        st_text = self.txt_start.text().strip()
+        en_text = self.txt_end.text().strip()
+        st_sec = self._parse_seconds(st_text)
+        en_sec = self._parse_seconds(en_text)
+
+        if st_sec is not None and en_sec is not None:
+            if en_sec > st_sec:
+                if en_sec > self.slider_range._max_val:
+                    new_max = en_sec * 1.2
+                    self.slider_range.setRange(0.0, new_max)
+                    self.lbl_slider_max.setText(self._format_seconds(new_max))
+                self.slider_range.setValues(st_sec, en_sec)
+                dur = en_sec - st_sec
+                self.lbl_slider_info.setText(
+                    f"▶ {self._format_seconds(st_sec)} – {self._format_seconds(en_sec)} ({self._format_seconds(dur)})"
+                )
+                if not self._clips:
+                    self.lbl_clip_count.setText("Clip selected (press + Add)")
+        elif st_sec is not None and not en_text:
+            self.slider_range.setLow(st_sec)
+        elif en_sec is not None and not st_text:
+            self.slider_range.setHigh(en_sec)
+
+    def _reset_clip_inputs(self):
+        """Clears clip inputs to allow full video download."""
+        self.txt_start.clear()
+        self.txt_end.clear()
+        self.slider_range.setValues(0.0, min(60.0, self.slider_range._max_val))
+        self.lbl_slider_info.setText("Drag handles to set clip range")
+        if not self._clips:
+            self.lbl_clip_count.setText("0 added (full video)")
+
     def _on_metadata_loaded(self, data: dict):
         title = data.get("title", "")
         dur_str = data.get("duration_str", "")
@@ -1139,8 +1512,21 @@ class MainWindow(QMainWindow):
         self.frame_meta.setVisible(True)
         self.lbl_meta.setText("Metadata resolved · ready to add clips or download")
 
+        # Dynamically scale slider to full video duration
+        if self._video_duration_sec > 0:
+            self.slider_range.setRange(0.0, self._video_duration_sec)
+            self.lbl_slider_max.setText(self._format_seconds(self._video_duration_sec))
+            st_sec = self._parse_seconds(self.txt_start.text())
+            en_sec = self._parse_seconds(self.txt_end.text())
+            if st_sec is not None and en_sec is not None:
+                self.slider_range.setValues(st_sec, min(en_sec, self._video_duration_sec))
+            elif not self.txt_start.text() and not self.txt_end.text():
+                self.lbl_slider_info.setText(
+                    f"Drag handles to set clip (0:00 – {self._format_seconds(self._video_duration_sec)})"
+                )
+
     def _apply_quick_duration(self, added_sec: int):
-        """Automatically calculates and sets End time based on Start time."""
+        """Automatically calculates and sets End time based on Start time and syncs slider."""
         start_txt = self.txt_start.text().strip()
         st_sec = self._parse_seconds(start_txt) if start_txt else 0.0
         if st_sec is None:
@@ -1149,7 +1535,19 @@ class MainWindow(QMainWindow):
         end_sec = st_sec + added_sec
         if self._video_duration_sec > 0 and end_sec > self._video_duration_sec:
             end_sec = self._video_duration_sec
+
+        if end_sec > self.slider_range._max_val:
+            self.slider_range.setRange(0.0, max(end_sec * 1.15, self._video_duration_sec))
+            self.lbl_slider_max.setText(self._format_seconds(self.slider_range._max_val))
+
         self.txt_end.setText(self._format_seconds(end_sec))
+        self.slider_range.setValues(st_sec, end_sec)
+        dur = max(0.0, end_sec - st_sec)
+        self.lbl_slider_info.setText(
+            f"▶ {self._format_seconds(st_sec)} – {self._format_seconds(end_sec)} ({self._format_seconds(dur)})"
+        )
+        if not self._clips:
+            self.lbl_clip_count.setText("Clip selected (press + Add)")
 
     def _on_preset_changed(self, idx: int):
         if idx == 0:  # Smart Compact
@@ -1197,8 +1595,25 @@ class MainWindow(QMainWindow):
         self._clips.append(item)
         self._refresh_queue_table()
 
-        self.txt_start.clear()
-        self.txt_end.clear()
+        self.tbl_queue.setRowCount(len(self._clips))
+        for row, item in enumerate(self._clips):
+            self.tbl_queue.setItem(row, 0, QTableWidgetItem(f"Clip {item['clip_num']}"))
+            self.tbl_queue.setItem(row, 1, QTableWidgetItem(item["range_str"]))
+
+        # Seamlessly advance slider to next segment
+        next_start = en_sec if en_sec is not None else 0.0
+        step = 60.0
+        next_end = min(self.slider_range._max_val, next_start + step)
+        if next_start >= self.slider_range._max_val:
+            next_start = 0.0
+            next_end = min(self.slider_range._max_val, step)
+        self.slider_range.setValues(next_start, next_end)
+        self.txt_start.setText(self._format_seconds(next_start))
+        self.txt_end.setText(self._format_seconds(next_end))
+        dur = max(0.0, next_end - next_start)
+        self.lbl_slider_info.setText(
+            f"▶ {self._format_seconds(next_start)} – {self._format_seconds(next_end)} ({self._format_seconds(dur)})"
+        )
         self.txt_start.setFocus()
         self.lbl_clip_count.setText(f"{len(self._clips)} clip{'s' if len(self._clips) > 1 else ''} queued")
 
