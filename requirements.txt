@@ -1,3 +1,4 @@
 # Python dependencies for yt-dlp GUI Pro
 PySide6>=6.5.0
+PySide6-Fluent-Widgets>=1.11.0
 yt-dlp[default]>=2025.1.0
